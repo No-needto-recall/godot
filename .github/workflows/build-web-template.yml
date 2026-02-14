@@ -1,0 +1,116 @@
+name: 🔨 Build Web Template (Encrypted)
+on:
+  workflow_dispatch:
+    inputs:
+      godot_version:
+        description: 'Godot version tag (e.g., 4.6)'
+        required: true
+        default: '4.6'
+        type: string
+
+# Global Settings
+env:
+  SCONS_FLAGS: >-
+    dev_mode=yes
+    tests=no
+    debug_symbols=no
+    use_closure_compiler=yes
+  EM_VERSION: 4.0.11
+
+jobs:
+  build-web-template:
+    runs-on: ubuntu-24.04
+    name: Build Web Template (nothreads, encrypted)
+    timeout-minutes: 90
+    
+    steps:
+      - name: Checkout MyGodot
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.godot_version }}
+          submodules: recursive
+
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EM_VERSION }}
+          no-cache: true
+
+      - name: Verify Emscripten setup
+        run: emcc -v
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: web-template-encrypted
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Build Web Template with Encryption
+        uses: ./.github/actions/godot-build
+        with:
+          platform: web
+          target: template_release
+          scons-flags: ${{ env.SCONS_FLAGS }} threads=no
+        env:
+          SCRIPT_AES256_ENCRYPTION_KEY: ${{ secrets.SCRIPT_AES256_ENCRYPTION_KEY }}
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: web-template-encrypted
+        continue-on-error: true
+
+      - name: List built files
+        run: ls -lh bin/
+
+      - name: Package Web Template
+        run: |
+          cd bin
+          # Package the nothreads template
+          zip -r godot.web.template_release.wasm32.nothreads.zip \
+            godot.web.template_release.wasm32.nothreads.* \
+            .web_zip/
+          
+          # Show zip contents
+          unzip -l godot.web.template_release.wasm32.nothreads.zip
+          
+          # Calculate SHA256
+          sha256sum godot.web.template_release.wasm32.nothreads.zip > godot.web.template_release.wasm32.nothreads.zip.sha256
+          cat godot.web.template_release.wasm32.nothreads.zip.sha256
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: web-template-v${{ inputs.godot_version }}-${{ github.run_number }}
+          name: Web Template v${{ inputs.godot_version }} (Build ${{ github.run_number }})
+          body: |
+            # Custom Godot Web Template (Encrypted)
+            
+            **Godot Version:** ${{ inputs.godot_version }}
+            **Build Date:** ${{ github.event.repository.updated_at }}
+            **Emscripten:** ${{ env.EM_VERSION }}
+            
+            ## Configuration
+            - **Threads:** Disabled (nothreads)
+            - **Encryption:** Enabled (AES-256)
+            - **Closure Compiler:** Yes
+            - **Debug Symbols:** No
+            
+            ## Usage
+            Download the zip file and configure it in your Godot project's export preset:
+            ```
+            custom_template/release = "path/to/godot.web.template_release.wasm32.nothreads.zip"
+            ```
+            
+            ## Verification
+            Check the SHA256 hash to verify file integrity.
+          files: |
+            bin/godot.web.template_release.wasm32.nothreads.zip
+            bin/godot.web.template_release.wasm32.nothreads.zip.sha256
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
