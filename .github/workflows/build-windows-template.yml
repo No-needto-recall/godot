@@ -1,0 +1,144 @@
+name: 🔨 Build Windows Template (Encrypted)
+on:
+  workflow_dispatch:
+    inputs:
+      godot_version:
+        description: 'Godot version tag (e.g., 4.6)'
+        required: true
+        default: '4.6'
+        type: string
+
+env:
+  SCONS_FLAGS: >-
+    dev_mode=yes
+    debug_symbols=no
+    module_text_server_fb_enabled=yes
+  SCONS_CACHE_MSVC_CONFIG: true
+  PYTHONIOENCODING: utf8
+
+jobs:
+  build-windows-template:
+    runs-on: windows-latest
+    name: Build Windows Template (encrypted)
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout MyGodot
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.godot_version }}
+          submodules: recursive
+
+      - name: Restore Godot build cache
+        uses: ./.github/actions/godot-cache-restore
+        with:
+          cache-name: windows-template-encrypted
+        continue-on-error: true
+
+      - name: Setup Python and SCons
+        uses: ./.github/actions/godot-deps
+
+      - name: Download Direct3D 12 SDK components
+        shell: sh
+        id: d3d12-sdk
+        run: |
+          if python ./misc/scripts/install_d3d12_sdk_windows.py; then
+            echo "D3D12_ENABLED=yes" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::D3D12 SDK install failed, building without D3D12."
+            echo "D3D12_ENABLED=no" >> "$GITHUB_OUTPUT"
+          fi
+        continue-on-error: true
+
+      - name: Download pre-built ANGLE static libraries
+        uses: dsaltares/fetch-gh-release-asset@1.1.2
+        with:
+          repo: godotengine/godot-angle-static
+          version: tags/chromium/6601.2
+          file: godot-angle-static-x86_64-msvc-release.zip
+          target: angle/angle.zip
+
+      - name: Extract pre-built ANGLE static libraries
+        run: Expand-Archive -Force angle/angle.zip ${{ github.workspace }}/
+
+      - name: Download pre-built AccessKit
+        uses: dsaltares/fetch-gh-release-asset@1.1.2
+        with:
+          repo: AccessKit/accesskit-c
+          version: tags/0.18.0
+          file: accesskit-c-0.18.0.zip
+          target: accesskit-c-0.18.0/accesskit_c.zip
+
+      - name: Extract pre-built AccessKit
+        run: unzip -o accesskit-c-0.18.0/accesskit_c.zip
+
+      - name: Build Windows Template with Encryption
+        uses: ./.github/actions/godot-build
+        with:
+          platform: windows
+          target: template_release
+          scons-flags: >-
+            ${{ env.SCONS_FLAGS }}
+            d3d12=${{ steps.d3d12-sdk.outputs.D3D12_ENABLED }}
+            "angle_libs=${{ github.workspace }}/"
+            "accesskit_sdk_path=${{ github.workspace }}/accesskit-c-0.18.0/"
+        env:
+          SCRIPT_AES256_ENCRYPTION_KEY: ${{ secrets.SCRIPT_AES256_ENCRYPTION_KEY }}
+
+      - name: Save Godot build cache
+        uses: ./.github/actions/godot-cache-save
+        with:
+          cache-name: windows-template-encrypted
+        continue-on-error: true
+
+      - name: List built files
+        shell: bash
+        run: ls -lh bin/
+
+      - name: Clean up build artifacts
+        run: Remove-Item bin/* -Include *.exp,*.lib,*.pdb -Force
+        continue-on-error: true
+
+      - name: Package Windows Template
+        shell: bash
+        run: |
+          cd bin
+          7z a godot.windows.template_release.x86_64.zip \
+            godot.windows.template_release.x86_64.exe \
+            godot.windows.template_release.x86_64.console.exe
+          sha256sum godot.windows.template_release.x86_64.zip > godot.windows.template_release.x86_64.zip.sha256
+          cat godot.windows.template_release.x86_64.zip.sha256
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: windows-template-v${{ inputs.godot_version }}-${{ github.run_number }}
+          name: Windows Template v${{ inputs.godot_version }} (Build ${{ github.run_number }})
+          body: |
+            # Custom Godot Windows Template (Encrypted)
+
+            **Godot Version:** ${{ inputs.godot_version }}
+            **Compiler:** MSVC (windows-latest)
+
+            ## Configuration
+            - **Architecture:** x86_64
+            - **Encryption:** Enabled (AES-256)
+            - **ANGLE:** Included (static)
+            - **D3D12:** ${{ steps.d3d12-sdk.outputs.D3D12_ENABLED }}
+            - **Debug Symbols:** No
+
+            ## Usage
+            Download the zip and configure it in your Godot project's Windows Desktop export preset:
+            ```
+            custom_template/release = "path/to/godot.windows.template_release.x86_64.exe"
+            ```
+
+            ## Verification
+            Check the SHA256 hash to verify file integrity.
+          files: |
+            bin/godot.windows.template_release.x86_64.zip
+            bin/godot.windows.template_release.x86_64.zip.sha256
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
