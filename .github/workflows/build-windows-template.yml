@@ -20,7 +20,7 @@ jobs:
   build-windows-template:
     runs-on: windows-latest
     name: Build Windows Template (encrypted)
-    timeout-minutes: 120
+    timeout-minutes: 240
 
     steps:
       - name: Checkout MyGodot
@@ -72,11 +72,24 @@ jobs:
       - name: Extract pre-built AccessKit
         run: unzip -o accesskit-c-0.18.0/accesskit_c.zip
 
-      - name: Build Windows Template with Encryption
+      - name: Build Windows Release Template with Encryption
         uses: ./.github/actions/godot-build
         with:
           platform: windows
           target: template_release
+          scons-flags: >-
+            ${{ env.SCONS_FLAGS }}
+            d3d12=${{ steps.d3d12-sdk.outputs.D3D12_ENABLED }}
+            "angle_libs=${{ github.workspace }}/"
+            "accesskit_sdk_path=${{ github.workspace }}/accesskit-c-0.18.0/"
+        env:
+          SCRIPT_AES256_ENCRYPTION_KEY: ${{ secrets.SCRIPT_AES256_ENCRYPTION_KEY }}
+
+      - name: Build Windows Debug Template with Encryption
+        uses: ./.github/actions/godot-build
+        with:
+          platform: windows
+          target: template_debug
           scons-flags: >-
             ${{ env.SCONS_FLAGS }}
             d3d12=${{ steps.d3d12-sdk.outputs.D3D12_ENABLED }}
@@ -99,7 +112,7 @@ jobs:
         run: Remove-Item bin/* -Include *.exp,*.lib,*.pdb -Force
         continue-on-error: true
 
-      - name: Package Windows Template
+      - name: Package Windows Templates
         shell: bash
         run: |
           cd bin
@@ -108,6 +121,12 @@ jobs:
             godot.windows.template_release.x86_64.console.exe
           sha256sum godot.windows.template_release.x86_64.zip > godot.windows.template_release.x86_64.zip.sha256
           cat godot.windows.template_release.x86_64.zip.sha256
+
+          7z a godot.windows.template_debug.x86_64.zip \
+            godot.windows.template_debug.x86_64.exe \
+            godot.windows.template_debug.x86_64.console.exe
+          sha256sum godot.windows.template_debug.x86_64.zip > godot.windows.template_debug.x86_64.zip.sha256
+          cat godot.windows.template_debug.x86_64.zip.sha256
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -128,16 +147,19 @@ jobs:
             - **Debug Symbols:** No
 
             ## Usage
-            Download the zip and configure it in your Godot project's Windows Desktop export preset:
+            Download the zips and configure them in your Godot project's Windows Desktop export preset:
             ```
             custom_template/release = "path/to/godot.windows.template_release.x86_64.exe"
+            custom_template/debug   = "path/to/godot.windows.template_debug.x86_64.exe"
             ```
 
             ## Verification
-            Check the SHA256 hash to verify file integrity.
+            Check the SHA256 hashes to verify file integrity.
           files: |
             bin/godot.windows.template_release.x86_64.zip
             bin/godot.windows.template_release.x86_64.zip.sha256
+            bin/godot.windows.template_debug.x86_64.zip
+            bin/godot.windows.template_debug.x86_64.zip.sha256
           draft: false
           prerelease: false
         env:
