@@ -35,6 +35,7 @@
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/resource_importer.h"
+#include "core/object/message_queue.h"
 #include "core/object/script_language.h"
 #include "core/os/condition_variable.h"
 #include "core/os/os.h"
@@ -225,16 +226,16 @@ void ResourceFormatLoader::_bind_methods() {
 // something we must treat as a different stack for the purposes
 // of tracking nesting.
 
-#define PREPARE_FOR_WTP_WAIT                                                   \
-	int load_nesting_backup = ResourceLoader::load_nesting;                    \
+#define PREPARE_FOR_WTP_WAIT \
+	int load_nesting_backup = ResourceLoader::load_nesting; \
 	Vector<String> load_paths_stack_backup = ResourceLoader::load_paths_stack; \
-	ResourceLoader::load_nesting = 0;                                          \
+	ResourceLoader::load_nesting = 0; \
 	ResourceLoader::load_paths_stack.clear();
 
-#define RESTORE_AFTER_WTP_WAIT                                  \
-	DEV_ASSERT(ResourceLoader::load_nesting == 0);              \
-	DEV_ASSERT(ResourceLoader::load_paths_stack.is_empty());    \
-	ResourceLoader::load_nesting = load_nesting_backup;         \
+#define RESTORE_AFTER_WTP_WAIT \
+	DEV_ASSERT(ResourceLoader::load_nesting == 0); \
+	DEV_ASSERT(ResourceLoader::load_paths_stack.is_empty()); \
+	ResourceLoader::load_nesting = load_nesting_backup; \
 	ResourceLoader::load_paths_stack = load_paths_stack_backup; \
 	load_paths_stack_backup.clear();
 
@@ -813,6 +814,22 @@ Ref<Resource> ResourceLoader::_load_complete(LoadToken &p_load_token, Error *r_e
 
 void ResourceLoader::set_is_import_thread(bool p_import_thread) {
 	import_thread = p_import_thread;
+}
+
+void ResourceLoader::notify_load_error(const String &p_err) {
+	if (err_notify) {
+		MessageQueue::get_main_singleton()->push_callable(callable_mp_static(err_notify).bind(p_err));
+	}
+}
+
+void ResourceLoader::notify_dependency_error(const String &p_path, const String &p_dependency, const String &p_type) {
+	if (dep_err_notify) {
+		if (Thread::get_caller_id() == Thread::get_main_id()) {
+			dep_err_notify(p_path, p_dependency, p_type);
+		} else {
+			MessageQueue::get_main_singleton()->push_callable(callable_mp_static(dep_err_notify).bind(p_path, p_dependency, p_type));
+		}
+	}
 }
 
 Ref<Resource> ResourceLoader::_load_complete_inner(LoadToken &p_load_token, Error *r_error, MutexLock<SafeBinaryMutex<BINARY_MUTEX_TAG>> &p_thread_load_lock) {

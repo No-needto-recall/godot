@@ -31,6 +31,7 @@
 #include "editor_inspector.h"
 #include "editor_inspector.compat.inc"
 
+#include "core/input/input.h"
 #include "core/os/keyboard.h"
 #include "editor/debugger/editor_debugger_inspector.h"
 #include "editor/doc/doc_tools.h"
@@ -1537,7 +1538,7 @@ void EditorProperty::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("property_favorited", PropertyInfo(Variant::STRING_NAME, "property"), PropertyInfo(Variant::BOOL, "favorited")));
 	ADD_SIGNAL(MethodInfo("property_pinned", PropertyInfo(Variant::STRING_NAME, "property"), PropertyInfo(Variant::BOOL, "pinned")));
 	ADD_SIGNAL(MethodInfo("property_can_revert_changed", PropertyInfo(Variant::STRING_NAME, "property"), PropertyInfo(Variant::BOOL, "can_revert")));
-	ADD_SIGNAL(MethodInfo("resource_selected", PropertyInfo(Variant::STRING, "path"), PropertyInfo(Variant::OBJECT, "resource", PROPERTY_HINT_RESOURCE_TYPE, "Resource")));
+	ADD_SIGNAL(MethodInfo("resource_selected", PropertyInfo(Variant::STRING, "path"), PropertyInfo(Variant::OBJECT, "resource", PROPERTY_HINT_RESOURCE_TYPE, Resource::get_class_static())));
 	ADD_SIGNAL(MethodInfo("object_id_selected", PropertyInfo(Variant::STRING_NAME, "property"), PropertyInfo(Variant::INT, "id")));
 	ADD_SIGNAL(MethodInfo("selected", PropertyInfo(Variant::STRING, "path"), PropertyInfo(Variant::INT, "focusable_idx")));
 
@@ -3844,6 +3845,11 @@ void EditorInspector::update_tree() {
 		return;
 	}
 
+	if (!is_visible_in_tree()) {
+		update_tree_pending = true;
+		return;
+	}
+
 	bool root_inspector_was_following_focus = get_root_inspector()->is_following_focus();
 	if (root_inspector_was_following_focus) {
 		// Temporarily disable focus following on the root inspector to avoid jumping while the inspector is updating.
@@ -3937,17 +3943,14 @@ void EditorInspector::update_tree() {
 	bool sub_inspectors_enabled = EDITOR_GET("interface/inspector/open_resources_in_current_inspector");
 
 	if (!valid_plugins.is_empty()) {
-		// Show early to avoid sizing problems.
-		begin_vbox->show();
-
 		for (Ref<EditorInspectorPlugin> &ped : valid_plugins) {
 			ped->parse_begin(object);
 			_parse_added_editors(begin_vbox, nullptr, ped);
 		}
 
-		// Hide it again if no editors were added to the beginning.
-		if (begin_vbox->get_child_count() == 0) {
-			begin_vbox->hide();
+		// Show if any of the editors were added to the beginning.
+		if (begin_vbox->get_child_count() > 0) {
+			begin_vbox->show();
 		}
 	}
 
@@ -5811,7 +5814,7 @@ void EditorInspector::add_custom_property_description(const String &p_class, con
 String EditorInspector::get_custom_property_description(const String &p_property) const {
 	HashMap<String, String>::ConstIterator E = custom_property_descriptions.find(p_property);
 	if (E) {
-		return E->value;
+		return TTR(E->value);
 	}
 	return "";
 }
@@ -5904,7 +5907,7 @@ void EditorInspector::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("property_selected", PropertyInfo(Variant::STRING, "property")));
 	ADD_SIGNAL(MethodInfo("property_keyed", PropertyInfo(Variant::STRING, "property"), PropertyInfo(Variant::NIL, "value", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NIL_IS_VARIANT), PropertyInfo(Variant::BOOL, "advance")));
 	ADD_SIGNAL(MethodInfo("property_deleted", PropertyInfo(Variant::STRING, "property")));
-	ADD_SIGNAL(MethodInfo("resource_selected", PropertyInfo(Variant::OBJECT, "resource", PROPERTY_HINT_RESOURCE_TYPE, "Resource"), PropertyInfo(Variant::STRING, "path")));
+	ADD_SIGNAL(MethodInfo("resource_selected", PropertyInfo(Variant::OBJECT, "resource", PROPERTY_HINT_RESOURCE_TYPE, Resource::get_class_static()), PropertyInfo(Variant::STRING, "path")));
 	ADD_SIGNAL(MethodInfo("object_id_selected", PropertyInfo(Variant::INT, "id")));
 	ADD_SIGNAL(MethodInfo("property_edited", PropertyInfo(Variant::STRING, "property")));
 	ADD_SIGNAL(MethodInfo("property_toggled", PropertyInfo(Variant::STRING, "property"), PropertyInfo(Variant::BOOL, "checked")));
@@ -5913,8 +5916,6 @@ void EditorInspector::_bind_methods() {
 }
 
 EditorInspector::EditorInspector() {
-	object = nullptr;
-
 	base_vbox = memnew(VBoxContainer);
 	base_vbox->set_theme_type_variation(SNAME("EditorInspectorContainer"));
 	base_vbox->set_h_size_flags(SIZE_EXPAND_FILL);
